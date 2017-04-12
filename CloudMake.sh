@@ -2,7 +2,7 @@
 
 portal=http://www.arcgis.com
 appstudio=https://appstudio.arcgis.com
-platform=win32
+platform=
 datestamp=$(date +%Y%m%d)
 tmpfile=/tmp/cloudmake-$datestamp-$$.tmp
 
@@ -12,11 +12,12 @@ CloudMake.sh -i itemId
              -u username
              -p password
              -t platform (e.g. win32)
+	     -a appstudio (e.g. https://appstudio.arcgis.com)
              -h help
 +
 }
 
-while getopts "hi:u:p:t:" arg; do
+while getopts "hi:u:p:t:a:" arg; do
   case $arg in
     h)
       showUsage
@@ -31,8 +32,11 @@ while getopts "hi:u:p:t:" arg; do
     p)
       PASSWORD=$OPTARG
       ;;
+    a)
+      appstudio=$OPTARG
+      ;;
     t)
-      platform=$OPTARG
+      PLATFORM=$OPTARG
       ;;
   esac
 done
@@ -58,7 +62,7 @@ if [ "$PASSWORD" == "" ]; then
   exit 1
 fi
 
-if [ "$platform" == "" ]; then
+if [ "$PLATFORM" == "" ]; then
   echo "Missing platform"
   echo
   showUsage
@@ -154,7 +158,7 @@ function submitBuild {
           -F token=$token \
           -F verbose=false \
           -F emailNotifications=none \
-          -F platforms=$platform \
+          -F platforms=$PLATFORM \
           -F f=pjson
 
   getValues appBuildId
@@ -172,8 +176,8 @@ function pollBuild {
 \&token=$token\
 \&f=pjson
 
-    var_status=statusInfo.$platform.status
-    var_progress=statusInfo.$platform.progress
+    var_status=statusInfo.$PLATFORM.status
+    var_progress=statusInfo.$PLATFORM.progress
     getValues $var_status $var_progress
     status=$(eval "echo \$${var_status//./_}")
     progress=$(eval "echo \$${var_progress//./_}")
