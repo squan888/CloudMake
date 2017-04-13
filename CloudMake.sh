@@ -1,88 +1,120 @@
-#!/bin/bash
+#!/bin/bash 
 
-portal=http://www.arcgis.com
-appstudio=https://appstudio.arcgis.com
-platform=
 datestamp=$(date +%Y%m%d)
 tmpfile=/tmp/cloudmake-$datestamp-$$.tmp
 
 function showUsage {
   cat <<+
-CloudMake.sh -i itemId
-             -u username
-             -p password
-             -t platform (e.g. win32)
-	     -a appstudio (e.g. https://appstudio.arcgis.com)
+CloudMake.sh -itemid    ITEMID
+             -username  USERNAME
+             -password  PASSWORD
+             -platform  PLATFORM (e.g. win32)
+             -appstudio AppStudio Cloud Make REST API (e.g. https://appstudio.arcgis.com)
              -h help
 +
 }
 
-while getopts "hi:u:p:t:a:" arg; do
-  case $arg in
-    h)
-      showUsage
-      exit 1
-      ;;
-    i)
-      ITEMID=$OPTARG
-      ;;
-    u)
-      USERNAME=$OPTARG
-      ;;
-    p)
-      PASSWORD=$OPTARG
-      ;;
-    a)
-      appstudio=$OPTARG
-      ;;
-    t)
-      PLATFORM=$OPTARG
-      ;;
+while [ "$1" != "" ]
+do
+  case "$1" in
+  -itemid)
+    shift
+    ITEMID=$1
+    ;;
+  -platform | -p)
+    shift
+    PLATFORM=$1
+    ;;
+  -username)
+    shift
+    USERNAME=$1
+    ;;
+  -password)
+    shift
+    PASSWORD=$1
+    ;;
+  -appstudio)
+    shift
+    APPSTUDIO=$1
+    ;;
+  -h )
+    showUsage
+    exit 0
+    ;;
+  *)
+    echo "Skipping $1"
+    ;;
   esac
+  shift
 done
 
+if [ "$PORTAL" == "" ]; then
+  PORTAL=http://www.arcgis.com
+fi
+
+if [ "$APPSTUDIO" == "" ]; then
+  APPSTUDIO=https://appstudio.arcgis.com
+fi
+
 if [ "$ITEMID" == "" ]; then
-  echo "Missing itemId"
+  echo "Missing ITEMID"
   echo
   showUsage
   exit 1
 fi
 
 if [ "$USERNAME" == "" ]; then
-  echo "Missing username"
+  echo "Missing USERNAME"
   echo
   showUsage
   exit 1
 fi
 
 if [ "$PASSWORD" == "" ]; then
-  echo "Missing password"
+  echo "Missing PASSWORD"
   echo
   showUsage
   exit 1
 fi
 
 if [ "$PLATFORM" == "" ]; then
-  echo "Missing platform"
+  echo "Missing PLATFORM"
   echo
   showUsage
   exit 1
 fi
 
-function json_get {
+function jsonPrint {
+  python -m json.tool
+}
+
+function jsonGet {
   python -c 'import json,sys
 o=json.load(sys.stdin)
 for a in "'$1'".split("."):
-  o=o[a] if isinstance(o, dict) and a in o else ""
-print o if isinstance(o, str) or isinstance(o, unicode) else json.dumps(o)
+  if isinstance(o, dict):
+    o=o[a] if a in o else ""
+  elif isinstance(o, list):
+    if a == "length":
+      o=str(len(o))
+    elif a == "join":
+      o=",".join(o)
+    else:
+      o=o[int(a)]
+  else:
+    o=""
+if isinstance(o, str) or isinstance(o, unicode):
+  print o
+else:
+  print json.dumps(o)
 '
 }
 
-function getValues {
+function jsonGetValues {
   for i in $*
   do
     n="${i//./_}"
-    v="$(json_get $i < $tmpfile)"
+    v="$(jsonGet $i < $tmpfile)"
     # echo "$n=$v"
     eval "$n=\"$v\""
   done
@@ -90,66 +122,79 @@ function getValues {
 }
 
 function restApi {
-  # echo curl $*
-  # echo
+  args=()
+  vars=()
+  while [ "$1" != "" ]
+  do
+    if [ "$1" == "--output" ]; then
+      shift
+      vars+=("$1")
+    else
+      args+=("$1")
+    fi
+    shift
+  done
 
-  curl $* > $tmpfile
+  # echo curl "${args[@]}"
+
+  curl "${args[@]}" > $tmpfile
+  # echo
 
   # cat $tmpfile
   # echo
   # echo
 
-  if [ "$(json_get error.code < $tmpfile)" != "" ]; then
+  if [ "$(jsonGet error.code < $tmpfile)" != "" ]; then
     cat $tmpfile
     echo
     rm $tmpfile
     exit 1
   fi
 
-  if [ "$(json_get errorCode < $tmpfile)" != "" ]; then
+  if [ "$(jsonGet errorCode < $tmpfile)" != "" ]; then
     cat $tmpfile
     echo
     rm $tmpfile
     exit 1
   fi
 
+  jsonGetValues "${vars[@]}"
 }
 
 function generateToken {
-  restApi -s $portal/sharing/rest/info?f=pjson
-
-  getValues authInfo.tokenServicesUrl
+  restApi -s $PORTAL/sharing/rest/info?f=pjson \
+          --output authInfo.tokenServicesUrl
 
   restApi -s $authInfo_tokenServicesUrl \
           -X POST \
           -d username=$USERNAME \
           -d password=$PASSWORD \
-          -d referer=$portal \
+          -d referer=$PORTAL \
           -d expiration=120 \
-          -d f=pjson
-
-  getValues token ssl expires
+          -d f=pjson \
+	  --output token \
+	  --output ssl \
+	  --output expires
 }
 
 function getUserInfo {
-  restApi -s $portal/sharing/rest/community/self\
+  restApi -s $PORTAL/sharing/rest/community/self\
 \?f=pjson\
-\&token=$token
-
-  getValues fullName email
+\&token=$token \
+          --output fullName \
+          --output email
 }
 
 function getItemInfo {
-  restApi -s $portal/sharing/rest/content/items/$ITEMID\
+  restApi -s $PORTAL/sharing/rest/content/items/$ITEMID\
 \?f=pjson\
-\&token=$token
-
-  getValues title
+\&token=$token \
+          --output title
 
 }
 
 function submitBuild {
-  restApi -s $appstudio/api/buildrequest \
+  restApi -s $APPSTUDIO/api/buildrequest \
           -X POST \
           -F itemId=$ITEMID \
           -F clientType=desktop \
@@ -159,9 +204,8 @@ function submitBuild {
           -F verbose=false \
           -F emailNotifications=none \
           -F platforms=$PLATFORM \
-          -F f=pjson
-
-  getValues appBuildId
+          -F f=pjson \
+	  --output appBuildId
 }
 
 function pollBuild {
@@ -171,17 +215,18 @@ function pollBuild {
   do
     sleep 5
 
-    restApi -s $appstudio/api/status\
+    restApi -s $APPSTUDIO/api/status\
 \?appBuildId=$appBuildId\
 \&token=$token\
 \&f=pjson
 
     var_status=statusInfo.$PLATFORM.status
     var_progress=statusInfo.$PLATFORM.progress
-    getValues $var_status $var_progress
+    jsonGetValues $var_status $var_progress
     status=$(eval "echo \$${var_status//./_}")
     progress=$(eval "echo \$${var_progress//./_}")
     percent=$(awk '{printf "%0.1f\n", $1 * 100.0}' <<< $progress)
+    rm $tmpfile
 
     echo -e -n "\033[A" 
     echo -e -n "\033[K" 
@@ -195,7 +240,14 @@ getUserInfo
 getItemInfo
 submitBuild
 if [ "$appBuildId" == "" ]; then
+  if [ -f "$tmpfile" ]; then
+    rm "$tmpfile"
+  fi
   exit 1
 fi
 pollBuild
+
+if [ -f "$tmpfile" ]; then
+  rm "$tmpfile"
+fi
 
