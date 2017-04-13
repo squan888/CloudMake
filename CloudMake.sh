@@ -172,9 +172,11 @@ function generateToken {
           -d referer=$PORTAL \
           -d expiration=120 \
           -d f=pjson \
-	  --output token \
-	  --output ssl \
-	  --output expires
+          --output token \
+          --output ssl \
+          --output expires
+
+  rm $tmpfile
 }
 
 function getUserInfo {
@@ -183,6 +185,8 @@ function getUserInfo {
 \&token=$token \
           --output fullName \
           --output email
+
+  rm $tmpfile
 }
 
 function getItemInfo {
@@ -191,6 +195,7 @@ function getItemInfo {
 \&token=$token \
           --output title
 
+  rm $tmpfile
 }
 
 function submitBuild {
@@ -205,7 +210,22 @@ function submitBuild {
           -F emailNotifications=none \
           -F platforms=$PLATFORM \
           -F f=pjson \
-	  --output appBuildId
+          --output appBuildId
+
+  if [ "$appBuildId" == "" ]; then
+    echo "No build id?!"
+    echo
+
+    cat $tmpfile
+    echo
+    echo
+
+    rm $tmpfile
+
+    exit 1
+  fi
+
+  rm $tmpfile
 }
 
 function pollBuild {
@@ -222,32 +242,74 @@ function pollBuild {
 
     var_status=statusInfo.$PLATFORM.status
     var_progress=statusInfo.$PLATFORM.progress
-    jsonGetValues $var_status $var_progress
+    var_installItemId=statusInfo.$PLATFORM.installItemId
+    var_installUrl=statusInfo.$PLATFORM.installUrl
+    jsonGetValues $var_status \
+                  $var_progress \
+                  $var_installItemId \
+                  $var_installUrl
     status=$(eval "echo \$${var_status//./_}")
     progress=$(eval "echo \$${var_progress//./_}")
+    installItemId=$(eval "echo \$${var_installItemId//./_}")
+    installUrl=$(eval "echo \$${var_installUrl//./_}")
     percent=$(awk '{printf "%0.1f\n", $1 * 100.0}' <<< $progress)
-    rm $tmpfile
+    # rm $tmpfile
 
     echo -e -n "\033[A" 
     echo -e -n "\033[K" 
     echo "Building $title ($status $percent%)"
-
   done
+  echo
+
+  if [ "$status" != "success" ]; then
+    echo "Build exitted with a status of $status"
+    echo
+
+    cat $tmpfile
+    echo
+    echo
+
+    rm $tmpfile
+
+    exit 1
+  fi
+
+  rm $tmpfile
+}
+
+function downloadInstaller {
+  name=
+
+  restApi -s $PORTAL/sharing/rest/content/items/$installItemId\
+\?f=pjson\
+\&token=$token \
+          --output name
+
+  if [ "$name" == "" ]; then
+    echo "Unable to determine name of the installer"
+    echo
+
+    jsonPrint < $tmpfile
+    echo
+
+    rm $tmpfile
+
+    exit 1
+  fi
+
+  rm $tmpfile
+
+  echo "Downloading $name ..."
+  echo
+
+  curl -L -O $PORTAL/sharing/rest/content/items/$installerItemId/data
+  echo
 }
 
 generateToken
 getUserInfo
 getItemInfo
 submitBuild
-if [ "$appBuildId" == "" ]; then
-  if [ -f "$tmpfile" ]; then
-    rm "$tmpfile"
-  fi
-  exit 1
-fi
 pollBuild
-
-if [ -f "$tmpfile" ]; then
-  rm "$tmpfile"
-fi
+downloadInstaller
 
